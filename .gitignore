@@ -1,0 +1,8 @@
+# Files
+
+# Exts
+*.txt
+
+# Directiories 
+zig-out/
+zig-cache/
