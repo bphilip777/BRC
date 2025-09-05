@@ -126,10 +126,9 @@ fn writer1(file: std.fs.File, num_rows: u32) !void {
     }
 }
 
-fn storeRandomNumber(arr: []u16, offset: u32, n_idxs: u32) void {
-    print("Offset: {}, Idxs: {}\n", .{ offset, n_idxs });
-    for (0..n_idxs) |i| {
-        arr[offset + i] = randomNumber(0, WeatherStations.stations.len);
+fn storeRandomNumber(arr: []u16) void {
+    for (0..arr.len) |i| {
+        arr[i] = randomNumber(0, WeatherStations.stations.len);
     }
 }
 
@@ -154,53 +153,98 @@ fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
         threads[i] = try std.Thread.spawn(
             .{},
             storeRandomNumber,
-            .{ all_rnds, curr_offset, idxs_per_thread },
+            .{all_rnds[curr_offset .. curr_offset + idxs_per_thread]},
         );
         curr_offset += idxs_per_thread;
     }
     for (0..n_threads) |i| threads[i].join();
     if (curr_offset != num_rows) {
-        storeRandomNumber(all_rnds, curr_offset, num_rows - curr_offset);
+        storeRandomNumber(all_rnds[curr_offset..num_rows]);
     }
     return all_rnds;
 }
 
-fn computeOffsets(all_rnds: []u32, offsets: *u32) void {
-    var i: usize = 0;
+fn storeOffset(all_rnds: []u16, offset: *u64) void {
+    const num_semicolons: u64 = 2;
     for (all_rnds) |curr_rnd| {
         const station = WeatherStations.stations[curr_rnd];
-        i += station.id.len + station.temp.len;
+        offset.* += station.id.len + station.temp.len + num_semicolons + end_str.len;
     }
-    offsets.* = i;
+}
+
+fn computeOffsets(all_rnds: []u16, offsets: []u64, num_rows: u32, n_threads: u32) !void {
+    std.debug.assert(offsets.len >= n_threads + 1);
+    std.debug.assert(n_threads > 0);
+    var threads: [32]Thread = undefined;
+    // compute offsets
+    const idxs_per_thread: u32 = num_rows / n_threads;
+    var curr_offset: u32 = 0;
+    // spawn threads + compute rnds
+    for (0..n_threads) |i| {
+        threads[i] = try Thread.spawn(
+            .{},
+            storeOffset,
+            .{ all_rnds[curr_offset .. curr_offset + idxs_per_thread], &offsets[i] },
+        );
+        curr_offset += idxs_per_thread;
+    }
+    for (0..n_threads) |i| threads[i].join();
+    for (1..n_threads) |i| offsets[i] += offsets[i - 1];
+    // compute file size at end
+    const num_semicolons: u64 = 2;
+    if (curr_offset < num_rows) {
+        for (all_rnds[curr_offset..]) |all_rnd| {
+            const station = WeatherStations.stations[all_rnd];
+            offsets[n_threads] = offsets[n_threads - 1] + //
+                station.id.len + //
+                station.temp.len + //
+                num_semicolons + //
+                end_str.len;
+        }
+    } else {
+        offsets[n_threads] = offsets[n_threads] - 1;
+    }
 }
 
 pub fn ver2(allo: Allocator, num_rows: u32) !void {
+    // _ = allo;
     // same as ver1 but threaded
     if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
     if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
     // create filename
-    // var filename_buffer: [128]u8 = undefined;
-    // const filename = std.fmt.bufPrint(
-    //     &filename_buffer,
-    //     "{s}_{}_{}{s}",
-    //     .{ basepath, 2, num_rows, ext },
-    // ) catch unreachable;
-    // _ = filename;
-
+    var filename_buffer: [128]u8 = undefined;
+    const filename = std.fmt.bufPrint(
+        &filename_buffer,
+        "{s}_{}_{}{s}",
+        .{ basepath, 2, num_rows, ext },
+    ) catch unreachable;
+    print("Filename: {s}\n", .{filename});
+    // create file
+    var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
+    defer file.close();
     // compute threads
     const n_threads = computeNThreads(num_rows);
     // pre-compute all random numbers
     const all_rnds = try computeRnds(allo, num_rows, n_threads);
     defer allo.free(all_rnds);
-    for (all_rnds) |val| print("{} ", .{val});
-    print("\n", .{});
     // compute offsets
     const offsets = blk: {
-        var offsets: [32]u32 = undefined;
-        for (0..n_threads) |i| {
-            offsets[i] = 1;
-        }
+        var offsets = [_]u64{0} ** 32;
+        try computeOffsets(all_rnds, &offsets, num_rows, n_threads);
+        break :blk offsets;
     };
+    // Update file size
+    try file.setEndPos(offsets[n_threads]);
+    // Create Data
+    var threads: [32]Thread = undefined;
+    const idxs_per_thread: u32 = num_rows / n_threads;
+    for (0..n_threads) |i| {
+        threads[i] = try Thread.spawn(
+            .{},
+            writer2,
+            .{ file, offsets[i], idxs_per_thread },
+        );
+    }
 }
 
 fn writer2(
