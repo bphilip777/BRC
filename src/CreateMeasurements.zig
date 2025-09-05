@@ -264,13 +264,6 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
     if (offsets[n_threads] != offsets[n_threads - 1]) {
         writer2(filename, all_rnds[curr_idx..all_rnds.len], offsets[n_threads]);
     }
-    // for (offsets) |offset| print("{} ", .{offset});
-    // var curr_pos: u64 = 0;
-    // for (all_rnds) |all_rnd| {
-    //     const station = WeatherStations.stations[all_rnd];
-    //     curr_pos += station.id.len + station.temp.len + 2 + end_str.len;
-    // }
-    // print("Curr Pos: {}\n", .{curr_pos});
 }
 
 fn writer2(filename: []const u8, rnds: []u16, offset: u64) !void {
