@@ -124,6 +124,9 @@ fn writer1(file: std.fs.File, num_rows: u32) !void {
         }
         buf_start = buf_end;
     }
+    if (buf_start != 0) {
+        _ = try file.write(data_buffer[0..buf_start]);
+    }
 }
 
 fn storeRandomNumber(arr: []u16) void {
@@ -233,25 +236,65 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
         try computeOffsets(all_rnds, &offsets, num_rows, n_threads);
         break :blk offsets;
     };
+    for (offsets) |offset| print("{} ", .{offset});
     // Update file size
     try file.setEndPos(offsets[n_threads]);
     // Create Data
-    var threads: [32]Thread = undefined;
+    // var threads: [32]Thread = undefined;
     const idxs_per_thread: u32 = num_rows / n_threads;
-    for (0..n_threads) |i| {
-        threads[i] = try Thread.spawn(
-            .{},
-            writer2,
-            .{ file, offsets[i], idxs_per_thread },
-        );
-    }
+    try writer2(file, offsets[0], idxs_per_thread);
+    // for (0..n_threads) |i| {
+    //     threads[i] = try Thread.spawn(
+    //         .{},
+    //         writer2,
+    //         .{ file, offsets[i], idxs_per_thread },
+    //     );
+    // }
 }
 
 fn writer2(
     file: std.fs.File,
     offset: usize, // offset into file
-    rows: usize, // amount of rows to write
+    all_rnds: []u16, // pre-computed random numbers
 ) !void {
     try file.seekTo(offset);
-    try writer1(file, @truncate(rows));
+    // buffers
+    var data_buffer: [4096]u8 = undefined;
+    // idxs
+    var buf_start: u32 = 0;
+    var buf_end: u32 = 0;
+    const num_semicolons: u32 = 2;
+    for (all_rnds) |random_row| {
+        const station = WeatherStations.stations[random_row];
+        // ) catch unreachable;
+        buf_end = buf_start + //
+            @as(u32, @truncate(station.id.len)) + //
+            @as(u32, @truncate(station.temp.len)) + //
+            @as(u32, @truncate(end_str.len)) + //
+            num_semicolons;
+        if (buf_end >= data_buffer.len) { // write data buffer
+            _ = try file.write(data_buffer[0..buf_start]);
+            buf_end -= buf_start;
+            buf_start = 0;
+        } else { // write daat
+            buf_end = buf_start + //
+                @as(u32, @truncate(station.id.len));
+            @memcpy(data_buffer[buf_start..buf_end], station.id);
+            @memset(data_buffer[buf_start .. buf_start + 1], ';');
+            buf_start += 1;
+            buf_end = buf_start + //
+                @as(u32, @truncate(station.temp.len));
+            @memcpy(data_buffer[buf_start..buf_end], station.temp);
+            buf_start = buf_end;
+            @memset(data_buffer[buf_start .. buf_start + 1], ';');
+            buf_start += 1;
+            buf_end = buf_start + //
+                @as(u32, @truncate(end_str.len));
+            @memcpy(data_buffer[buf_start..buf_end], end_str);
+        }
+        buf_start = buf_end;
+    }
+    if (buf_start != 0) {
+        _ = try file.write(data_buffer[0..buf_start]);
+    }
 }
