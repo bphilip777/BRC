@@ -5,7 +5,7 @@ const print = std.debug.print;
 const CreateMeasurements = @import("CreateMeasurements.zig");
 const wVer0 = CreateMeasurements.ver0;
 const wVer1 = CreateMeasurements.ver1;
-// const wVer2 = CreateMeasurements.ver2;
+const wVer2 = CreateMeasurements.ver2;
 
 // const ParseMeasurements = @import("ParseMeasurements.zig");
 // const rVer0 = ParseMeasurements.ver0;
@@ -15,13 +15,13 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allo: Allocator = gpa.allocator();
     defer std.debug.assert(gpa.deinit() == .ok);
-    _ = allo;
+    // _ = allo;
 
     // create file
     const num_rows: u32 = 1024 * 1024;
-    try timer(.{ .wVer0 = wVer0 }, .{ .num_rows = num_rows });
-    try timer(.{ .wVer1 = wVer1 }, .{ .num_rows = num_rows });
-    // try timer(.{ .wVer2 = wVer2 }, .{ .allo = allo, .num_rows = num_rows }); // still not working correctly
+    // try timer(.{ .wVer0 = wVer0 }, .{ .num_rows = num_rows });
+    // try timer(.{ .wVer1 = wVer1 }, .{ .num_rows = num_rows });
+    try timer(.{ .wVer2 = wVer2 }, .{ .allo = allo, .num_rows = num_rows });
 
     // read file
     // try timer(.{ .rVer0 = rVer0 }, .{});
@@ -30,7 +30,7 @@ pub fn main() !void {
 const Versions = union(enum) {
     wVer0: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
     wVer1: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver1)).@"fn".return_type.?).error_union.error_set!void,
-    // wVer2: fn (std.mem.Allocator, u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver2)).@"fn".return_type.?).error_union.error_set!void,
+    wVer2: fn (std.mem.Allocator, u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver2)).@"fn".return_type.?).error_union.error_set!void,
     // rVer0: fn () @typeInfo(@typeInfo(@TypeOf(ParseMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
 };
 
@@ -47,7 +47,7 @@ fn timer(
     switch (versions) {
         .wVer0 => |ver| try ver(inputs.num_rows),
         .wVer1 => |ver| try ver(inputs.num_rows),
-        // .wVer2 => |ver| try ver(inputs.allo.?, inputs.num_rows),
+        .wVer2 => |ver| try ver(inputs.allo.?, inputs.num_rows),
         // .rVer0 => |ver| try ver(),
     }
     const end = std.time.nanoTimestamp();
