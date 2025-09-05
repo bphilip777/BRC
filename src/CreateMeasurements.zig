@@ -127,13 +127,13 @@ fn writer1(file: std.fs.File, num_rows: u32) !void {
 }
 
 fn storeRandomNumber(arr: []u16, offset: u32, n_idxs: u32) void {
-    for (arr[offset .. offset + n_idxs]) |i| {
-        arr[i] = randomNumber(0, WeatherStations.stations.len);
+    print("Offset: {}, Idxs: {}\n", .{ offset, n_idxs });
+    for (0..n_idxs) |i| {
+        arr[offset + i] = randomNumber(0, WeatherStations.stations.len);
     }
 }
 
 pub fn ver2(allo: Allocator, num_rows: u32) !void {
-    _ = allo;
     // same as ver1 but threaded
     if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
     if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
@@ -148,12 +148,11 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
 
     // compute threads
     const n_threads = computeNThreads(num_rows);
-    print("# of Threads: {}\n", .{n_threads});
     // pre-compute all random numbers
-    // const all_rnds = try computeRnds(allo, num_rows, n_threads);
-    // defer allo.free(all_rnds);
-    // for (all_rnds) |val| print("{} ", .{val});
-    // print("\n", .{});
+    const all_rnds = try computeRnds(allo, num_rows, n_threads);
+    defer allo.free(all_rnds);
+    for (all_rnds) |val| print("{} ", .{val});
+    print("\n", .{});
 
     // const offsets: [32]usize = blk: {
     //     var offsets: [32]usize = undefined;
@@ -201,7 +200,7 @@ fn computeNThreads(num_rows: u32) u32 {
     const total_threads = Thread.getCpuCount() catch 1;
     const usable_threads = total_threads - @intFromBool(total_threads > 1);
     const data_threads = num_rows / MIN_ROWS_PER_THREAD;
-    return @min(usable_threads, data_threads);
+    return @max(1, @min(usable_threads, data_threads));
 }
 
 fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
@@ -213,6 +212,7 @@ fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
     // compute offsets
     const idxs_per_thread: u32 = num_rows / n_threads;
     var curr_offset: u32 = 0;
+    // spawn threads + compute rnds
     for (0..n_threads) |i| {
         threads[i] = try std.Thread.spawn(
             .{},
@@ -221,6 +221,7 @@ fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
         );
         curr_offset += idxs_per_thread;
     }
+    for (0..n_threads) |i| threads[i].join();
     if (curr_offset != num_rows) {
         storeRandomNumber(all_rnds, curr_offset, num_rows - curr_offset);
     }
