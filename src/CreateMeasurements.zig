@@ -14,9 +14,11 @@ inline fn randomNumber(min: u16, max: u16) u16 {
 const basepath = "src/measurements_ver";
 const ext = ".txt";
 // Weather Stations
+const WeatherStation = @import("WeatherStation.zig");
 const WeatherStations = @import("WeatherStations.zig");
-// Show End Str
+// file str consts
 const end_str = if (@import("builtin").os.tag == .windows) "\r\n" else "\n";
+const num_semicolons: u16 = 2;
 // Limit
 const NUM_ROWS_LIMIT: u32 = 1024 * 1024 * 1024;
 const MIN_ROWS_PER_THREAD: u32 = 4096;
@@ -86,42 +88,56 @@ fn writer1(file: std.fs.File, num_rows: u32) !void {
     var data_buffer: [4096]u8 = undefined;
     // idxs
     var curr_row: u32 = 0; // current row
-    var buf_start: u32 = 0;
-    var buf_end: u32 = 0;
-    const num_semicolons: u32 = 2;
+    var idx = Idx{};
     while (curr_row < num_rows) : (curr_row += 1) {
         const random_row = randomNumber(0, WeatherStations.stations.len);
         const station = WeatherStations.stations[random_row];
-        buf_end = buf_start + //
-            @as(u32, @truncate(station.id.len)) + //
-            @as(u32, @truncate(station.temp.len)) + //
-            @as(u32, @truncate(end_str.len)) + //
-            num_semicolons;
-        if (buf_end >= data_buffer.len) { // write data buffer
-            _ = try file.write(data_buffer[0..buf_start]);
-            buf_end -= buf_start;
-            buf_start = 0;
-        } else { // write daat
-            buf_end = buf_start + //
-                @as(u32, @truncate(station.id.len));
-            @memcpy(data_buffer[buf_start..buf_end], station.id);
-            @memset(data_buffer[buf_start .. buf_start + 1], ';');
-            buf_start += 1;
-            buf_end = buf_start + //
-                @as(u32, @truncate(station.temp.len));
-            @memcpy(data_buffer[buf_start..buf_end], station.temp);
-            buf_start = buf_end;
-            @memset(data_buffer[buf_start .. buf_start + 1], ';');
-            buf_start += 1;
-            buf_end = buf_start + //
-                @as(u32, @truncate(end_str.len));
-            @memcpy(data_buffer[buf_start..buf_end], end_str);
-        }
-        buf_start = buf_end;
+        idx = try core(file, station, idx, &data_buffer);
     }
-    if (buf_start != 0) {
-        _ = try file.write(data_buffer[0..buf_start]);
+    if (idx.start != 0) {
+        _ = try file.write(data_buffer[0..idx.start]);
     }
+}
+
+const Idx = struct {
+    start: u16 = 0,
+    end: u16 = 0,
+};
+
+inline fn core(
+    file: std.fs.File,
+    station: WeatherStation,
+    idx: Idx,
+    data_buffer: *[4096]u8,
+) !Idx {
+    var new_idx = idx;
+    new_idx.end = new_idx.start + //
+        @as(@TypeOf(new_idx.start), @truncate(station.id.len)) + //
+        @as(@TypeOf(new_idx.start), @truncate(station.temp.len)) + //
+        @as(@TypeOf(new_idx.start), @truncate(end_str.len)) + //
+        num_semicolons;
+    if (new_idx.end >= data_buffer.len) { // write data buffer
+        _ = try file.write(data_buffer[0..new_idx.start]);
+        new_idx.end -= new_idx.start;
+        new_idx.start = 0;
+    } else { // write data
+        new_idx.end = new_idx.start + @as(@TypeOf(new_idx.start), @truncate(station.id.len));
+        @memcpy(data_buffer[new_idx.start..new_idx.end], station.id);
+        new_idx.start = new_idx.end;
+        new_idx.end += 1;
+        @memset(data_buffer[new_idx.start..new_idx.end], ';');
+        new_idx.start = new_idx.end;
+        new_idx.end = new_idx.start + @as(@TypeOf(new_idx.start), @truncate(station.temp.len));
+        @memcpy(data_buffer[new_idx.start..new_idx.end], station.temp);
+        new_idx.start = new_idx.end;
+        new_idx.end += 1;
+        @memset(data_buffer[new_idx.start..new_idx.end], ';');
+        new_idx.start = new_idx.end;
+        new_idx.end = new_idx.start + @as(@TypeOf(new_idx.start), @truncate(end_str.len));
+        @memcpy(data_buffer[new_idx.start..new_idx.end], end_str);
+    }
+    new_idx.start = new_idx.end;
+    return new_idx;
 }
 
 fn storeRandomNumber(arr: []u16) void {
@@ -163,7 +179,6 @@ fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
 }
 
 fn storeOffset(all_rnds: []u16, offset: *u64) void {
-    const num_semicolons: u64 = 2;
     for (all_rnds) |curr_rnd| {
         const station = WeatherStations.stations[curr_rnd];
         offset.* += station.id.len + station.temp.len + num_semicolons + end_str.len;
@@ -189,7 +204,6 @@ fn computeOffsets(all_rnds: []u16, offsets: []u64, num_rows: u32, n_threads: u32
     for (0..n_threads) |i| threads[i].join();
     for (1..n_threads) |i| offsets[i] += offsets[i - 1];
     // compute file size at end
-    const num_semicolons: u64 = 2;
     offsets[n_threads] = offsets[n_threads - 1];
     if (curr_offset < num_rows) {
         for (all_rnds[curr_offset..]) |all_rnd| {
@@ -231,8 +245,12 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
         try computeOffsets(all_rnds, &offsets, num_rows, n_threads);
         break :blk offsets;
     };
+    print("Offsets: ", .{});
+    for (offsets) |offset| print("{} ", .{offset});
+    print("\n", .{});
     try file.setEndPos(offsets[n_threads]);
-    // try writer2(file, all_rnds[], offsets[1]);
+    const idxs_per_thread: u32 = num_rows / n_threads;
+    try writer2(filename, all_rnds[idxs_per_thread .. idxs_per_thread * 2], offsets[1]);
     // for (offsets) |offset| print("{} ", .{offset});
     // var curr_pos: u64 = 0;
     // for (all_rnds) |all_rnd| {
@@ -242,46 +260,21 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
     // print("Curr Pos: {}\n", .{curr_pos});
 }
 
-fn writer2(file: std.fs.File, rnds: []u16, offset: u64) !void {
-    if (rnds.len == 0) return;
+fn writer2(filename: []const u8, rnds: []u16, offset: u64) !void {
+    std.debug.assert(rnds.len > 0);
     // file
+    var file = try std.fs.cwd().openFile(filename, .{ .mode = .write_only });
+    defer file.close();
     try file.seekTo(offset);
     // data
     var data_buffer: [4096]u8 = undefined;
-    const T: type = u16;
-    var buf_start: T = 0;
-    var buf_end: T = 0;
-    const num_semicolons: u16 = 2;
+    // buffer idx
+    var idx = Idx{};
     for (rnds) |curr_row| {
         const station = WeatherStations.stations[curr_row];
-        buf_end = buf_start + //
-            @as(T, @truncate(station.id.len)) + //
-            @as(T, @truncate(station.temp.len)) + //
-            @as(T, @truncate(end_str.len)) + //
-            num_semicolons;
-        if (buf_end >= data_buffer.len) { // write data buffer
-            _ = try file.write(data_buffer[0..buf_start]);
-            buf_end -= buf_start;
-            buf_start = 0;
-        } else { // write out buffer
-            buf_end = buf_start + //
-                @as(T, @truncate(station.id.len)); // name
-            @memcpy(data_buffer[buf_start..buf_end], station.id);
-            @memset(data_buffer[buf_start .. buf_start + 1], ';'); // semicolon 1
-            buf_start += 1;
-            buf_end = buf_start + //
-                @as(T, @truncate(station.temp.len)); // temp
-            @memcpy(data_buffer[buf_start..buf_end], station.temp);
-            buf_start = buf_end;
-            @memset(data_buffer[buf_start .. buf_start + 1], ';'); // semicolon 2
-            buf_start += 1;
-            buf_end = buf_start + //
-                @as(T, @truncate(end_str.len)); // end str
-            @memcpy(data_buffer[buf_start..buf_end], end_str);
-        }
-        buf_start = buf_end;
+        idx = try core(file, station, idx, &data_buffer);
     }
-    if (buf_start != 0) {
-        _ = try file.write(data_buffer[0..buf_start]);
+    if (idx.start != 0) {
+        _ = try file.write(data_buffer[0..idx.start]);
     }
 }
