@@ -1,286 +1,165 @@
-// Std
 const std = @import("std");
 const print = std.debug.print;
-const Allocator = std.mem.Allocator;
-// Random - Does this work with multithreading?
-const RndGen = std.Random.DefaultPrng;
-const seed: u64 = 11223344;
-var rnd = RndGen.init(seed);
-const rand = rnd.random();
-inline fn randomNumber(min: u16, max: u16) u16 {
-    return rand.intRangeLessThan(u16, min, max);
-}
-// Base filepath
-const basepath = "src/measurements_ver";
-const ext = ".txt";
-// Weather Stations
-const WeatherStation = @import("WeatherStation.zig");
-const WeatherStations = @import("WeatherStations.zig");
-// file str consts
-const end_str = if (@import("builtin").os.tag == .windows) "\r\n" else "\n";
-const num_semicolons: u16 = 2;
-// Limit
-const NUM_ROWS_LIMIT: u32 = 1024 * 1024 * 1024;
-const MIN_ROWS_PER_THREAD: u32 = 4096;
-// Errors
-const CreateMeasurementsError = error{
-    TooFewRows,
-    TooManyRows,
-};
-// Thread stuff
-const Mutex = std.Thread.Mutex;
-const Thread = std.Thread;
+const allo = std.mem.Allocator;
+const WeatherStations = @import("WeatherStations.zig").stations;
 
-// Versions
+fn roundToTenths(x: f32) f32 {
+    return @round(x * 10.0) / 10.0;
+}
+
+fn sampleGaussian(rng: *const std.Random, mean: f32, variance: f32) f32 {
+    const uu1: f32 = rng.float(f32);
+    const uu2: f32 = rng.float(f32);
+    const z0 = @sqrt(-2.0 * @log(uu1)) * @cos(2.0 * std.math.pi * uu2);
+    return roundToTenths(mean + z0 * @sqrt(variance));
+}
+
 pub fn ver0(num_rows: u32) !void {
-    // uses bufprint to write row by row
-    if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
-    if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
-    // create filename
-    var filename_buffer: [128]u8 = undefined;
-    const filename = std.fmt.bufPrint(
-        &filename_buffer,
-        "{s}_{}_{}{s}",
-        .{ basepath, 0, num_rows, ext },
-    ) catch unreachable;
+    // Naive approach - line by line
+    var buffer: [128]u8 = undefined;
     // create file
+    const filename = try std.fmt.bufPrint(
+        &buffer,
+        "src/measurements_ver0_{}.txt",
+        .{num_rows},
+    );
     var file = try std.fs.cwd().createFile(filename, .{});
     defer file.close();
-    // create + write data
-    var data_buffer: [128]u8 = undefined;
-    // writing very little data at a time
+    // create random generator
+    var RndGen = std.Random.DefaultPrng.init(0);
+    const rng = RndGen.random();
+    // loop
     for (0..num_rows) |_| {
-        const row = randomNumber(0, WeatherStations.stations.len);
-        const station = WeatherStations.stations[row];
-
-        const data = std.fmt.bufPrint(
-            &data_buffer,
-            "{s};{s};{s}",
-            .{ station.id, station.temp, end_str },
-        ) catch unreachable;
-        _ = try file.write(data);
+        // get station
+        const row = rng.intRangeLessThan(u32, 0, WeatherStations.len);
+        const station = WeatherStations[row];
+        // convert to value
+        const new_temp = sampleGaussian(&rng, station.temp, 10);
+        const newline = try std.fmt.bufPrint(&buffer, "{s};{};\r\n", .{ station.id, new_temp });
+        _ = try file.write(newline);
     }
 }
 
 pub fn ver1(num_rows: u32) !void {
-    // memcpy instead of bufprint
-    // uses larger buffers
-    // improved speed by up to 8x - still not that fast though
-    if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
-    if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
-    // create filename
-    var filename_buffer: [128]u8 = undefined;
-    const filename = std.fmt.bufPrint(
-        &filename_buffer,
-        "{s}_{}_{}{s}",
-        .{ basepath, 1, num_rows, ext },
-    ) catch unreachable;
-    // create file
+    // Buffered approach
+    var line_buf: [128]u8 = undefined;
+    const filename = try std.fmt.bufPrint(
+        &line_buf,
+        "src/measurements_ver1_{}.txt",
+        .{num_rows},
+    );
     var file = try std.fs.cwd().createFile(filename, .{});
     defer file.close();
-    // write to file
-    try writer1(file, num_rows);
-}
-
-fn writer1(file: std.fs.File, num_rows: u32) !void {
-    if (num_rows == 0) return;
-    // buffers
-    var data_buffer: [4096]u8 = undefined;
-    // idxs
-    var curr_row: u32 = 0; // current row
-    var idx = Idx{};
-    while (curr_row < num_rows) : (curr_row += 1) {
-        const random_row = randomNumber(0, WeatherStations.stations.len);
-        const station = WeatherStations.stations[random_row];
-        idx = try core(file, station, idx, &data_buffer);
-    }
-    if (idx.start != 0) {
-        _ = try file.write(data_buffer[0..idx.start]);
-    }
-}
-
-const Idx = struct {
-    start: u16 = 0,
-    end: u16 = 0,
-};
-
-inline fn core(
-    file: std.fs.File,
-    station: WeatherStation,
-    idx: Idx,
-    data_buffer: *[4096]u8,
-) !Idx {
-    var new_idx = idx;
-    new_idx.end = new_idx.start + //
-        @as(@TypeOf(new_idx.start), @truncate(station.id.len)) + //
-        @as(@TypeOf(new_idx.start), @truncate(station.temp.len)) + //
-        @as(@TypeOf(new_idx.start), @truncate(end_str.len)) + //
-        num_semicolons;
-    if (new_idx.end >= data_buffer.len) { // write data buffer
-        _ = try file.write(data_buffer[0..new_idx.start]);
-        new_idx.end -= new_idx.start;
-        new_idx.start = 0;
-    } else { // write data
-        new_idx.end = new_idx.start + @as(@TypeOf(new_idx.start), @truncate(station.id.len));
-        @memcpy(data_buffer[new_idx.start..new_idx.end], station.id);
-        new_idx.start = new_idx.end;
-        new_idx.end += 1;
-        @memset(data_buffer[new_idx.start..new_idx.end], ';');
-        new_idx.start = new_idx.end;
-        new_idx.end = new_idx.start + @as(@TypeOf(new_idx.start), @truncate(station.temp.len));
-        @memcpy(data_buffer[new_idx.start..new_idx.end], station.temp);
-        new_idx.start = new_idx.end;
-        new_idx.end += 1;
-        @memset(data_buffer[new_idx.start..new_idx.end], ';');
-        new_idx.start = new_idx.end;
-        new_idx.end = new_idx.start + @as(@TypeOf(new_idx.start), @truncate(end_str.len));
-        @memcpy(data_buffer[new_idx.start..new_idx.end], end_str);
-    }
-    new_idx.start = new_idx.end;
-    return new_idx;
-}
-
-fn storeRandomNumber(arr: []u16) void {
-    for (0..arr.len) |i| {
-        arr[i] = randomNumber(0, WeatherStations.stations.len);
+    // create random generator
+    var RndGen = std.Random.DefaultPrng.init(0);
+    const rng = RndGen.random();
+    // data
+    var data_buf: [4096]u8 = undefined;
+    var data_idx: u16 = 0;
+    // loop
+    for (0..num_rows) |_| {
+        const row = rng.intRangeLessThan(u32, 0, WeatherStations.len);
+        const station = WeatherStations[row];
+        const new_temp = sampleGaussian(&rng, station.temp, 10);
+        const newline = try std.fmt.bufPrint(&line_buf, "{s};{};\r\n", .{ station.id, new_temp });
+        if ((data_idx + newline.len) > data_buf.len) {
+            _ = try file.write(data_buf[0..data_idx]);
+            data_idx = 0;
+        }
+        @memcpy(data_buf[data_idx .. data_idx + newline.len], newline);
+        data_idx += @truncate(newline.len);
     }
 }
 
-fn computeNThreads(num_rows: u32) u32 {
-    const total_threads = Thread.getCpuCount() catch 1;
+fn computeNThreads(allo: Allocator, num_rows: u32) u8 {
+    const total_threads = try std.Thread.getCpuCount();
     const usable_threads = total_threads - @intFromBool(total_threads > 1);
-    const data_threads = num_rows / MIN_ROWS_PER_THREAD;
-    return @max(1, @min(usable_threads, data_threads));
+    const min_rows_per_thread: u16 = 1024;
+    const desired_threads = num_rows / min_rows_per_thread;
+    return @max(1, @min(usable_threads, desired_threads));
 }
 
-fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
-    // create mem
-    const all_rnds: []u16 = try allo.alloc(u16, num_rows);
-    errdefer allo.free(all_rnds);
-    // create threads
-    var threads: [32]Thread = undefined;
-    // compute offsets
-    const idxs_per_thread: u32 = num_rows / n_threads;
-    var curr_offset: u32 = 0;
-    // spawn threads + compute rnds
+pub fn ver2(num_rows: u32) !void {
+    var line_buf: [128]u8 = undefined;
+    // create filename
+    const filename = try std.fmt.bufPrint(&line_buf, "src/measurements_ver2_{}.txt", .{num_rows});
+    var file = try std.fs.cwd().createFile(filename, .{});
+    defer file.close();
+    // create random generator
+    var RndGen = std.Random.DefaultPrng.init(0);
+    const rng = RndGen.random();
+    // compute threads
+    const n_threads: u8 = try computeNThreads(num_rows);
+    var threads: [32]std.Thread = undefined;
+    // precompute random numbers
+    const rows = try preComputeRows(num_rows, n_threads, &rng);
+    defer allo.free(rows);
+    // compute offsets into memory
+    var offsets = [_]u64{0} ** 32;
+    preComputeOffsets(&offsets, num_rows, n_threads, &rng);
+    // loop
+    // const n_rows_per_thread
+    // for (0..num_rows) |_| {
+    //
+    // }
+}
+
+fn fillRows(rng: *const std.Random, rows: []u16) !void {
+    for (0..rows.len) |i| {
+        rows[i] = rng.intRangeLessThan(u32, 0, WeatherStations.len);
+    }
+}
+
+fn preComputeRows(
+    num_rows: u32,
+    n_threads: u8,
+    rng: *const std.Random,
+) ![]u16 {
+    var rows = try allo.alloc(u16, num_rows);
+    errdefer allo.free(rows);
+    const n_rows_per_thread = rows / n_threads;
+    var curr_start: u32 = 0;
+    var threads: [32]std.Thread = undefined;
     for (0..n_threads) |i| {
         threads[i] = try std.Thread.spawn(
             .{},
-            storeRandomNumber,
-            .{all_rnds[curr_offset .. curr_offset + idxs_per_thread]},
+            fillRows,
+            .{ &rng, rows[curr_start .. curr_start + n_rows_per_thread] },
         );
-        curr_offset += idxs_per_thread;
+        curr_start += n_rows_per_thread;
     }
     for (0..n_threads) |i| threads[i].join();
-    if (curr_offset != num_rows) {
-        storeRandomNumber(all_rnds[curr_offset..num_rows]);
+    if (curr_start < num_rows) {
+        fillRows(&rng, rows[curr_start..num_rows]);
     }
-    return all_rnds;
+    return rows;
 }
 
-fn storeOffset(all_rnds: []u16, offset: *u64) void {
-    for (all_rnds) |curr_rnd| {
-        const station = WeatherStations.stations[curr_rnd];
-        offset.* += station.id.len + station.temp.len + num_semicolons + end_str.len;
+fn fillOffsets(offset: *u64, rows: []u16) void {
+    for (rows) |row| {
+        const station = WeatherStations[row];
+        offset.* += station.id.len + @ceil(@log10(station.temp)) + 4;
     }
 }
 
-fn computeOffsets(all_rnds: []u16, offsets: []u64, num_rows: u32, n_threads: u32) !void {
-    std.debug.assert(offsets.len >= n_threads + 1);
-    std.debug.assert(n_threads > 0);
-    var threads: [32]Thread = undefined;
-    // compute offsets
-    const idxs_per_thread: u32 = num_rows / n_threads;
-    var curr_offset: u32 = 0;
-    // spawn threads + compute rnds
+fn preComputeOffsets(offsets: []u64, num_rows: u32, rows: []u16, n_threads: u8) void {
+    std.debug.assert(offsets.len > n_threads);
+    const n_rows_per_thread = num_rows / n_threads;
+    var threads: [32]std.Thread = undefined;
+    var curr_idx: u32 = 0;
     for (0..n_threads) |i| {
-        threads[i] = try Thread.spawn(
+        threads[i] = try std.Thread.spawn(
             .{},
-            storeOffset,
-            .{ all_rnds[curr_offset .. curr_offset + idxs_per_thread], &offsets[i] },
+            fillOffsets,
+            .{ &offsets[i], rows[curr_idx .. curr_idx + n_rows_per_thread] },
         );
-        curr_offset += idxs_per_thread;
+        curr_idx += n_rows_per_thread;
     }
     for (0..n_threads) |i| threads[i].join();
-    for (1..n_threads) |i| offsets[i] += offsets[i - 1];
-    // compute file size at end
-    offsets[n_threads] = offsets[n_threads - 1];
-    if (curr_offset < num_rows) {
-        for (all_rnds[curr_offset..]) |all_rnd| {
-            const station = WeatherStations.stations[all_rnd];
-            offsets[n_threads] += station.id.len + //
-                station.temp.len + //
-                num_semicolons + //
-                end_str.len;
-        }
+    if (curr_idx < num_rows) {
+        offsets[n_threads] = fillOffsets(rows);
     }
-}
-
-pub fn ver2(allo: Allocator, num_rows: u32) !void {
-    // _ = allo;
-    // same as ver1 but threaded
-    if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
-    if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
-    // // create filename
-    var filename_buffer: [128]u8 = undefined;
-    const filename = std.fmt.bufPrint(
-        &filename_buffer,
-        "{s}_{}_{}{s}",
-        .{ basepath, 2, num_rows, ext },
-    ) catch unreachable;
-    print("Filename: {s}\n", .{filename});
-    // create file
-    var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
-    defer file.close();
-    // compute threads
-    const n_threads = computeNThreads(num_rows);
-    print("# Of Threads: {}\n", .{n_threads});
-    // pre-compute all random numbers
-    const all_rnds = try computeRnds(allo, num_rows, n_threads);
-    defer allo.free(all_rnds);
-    print("# of Rnds: {}\n", .{all_rnds.len});
-    // compute offsets
-    const offsets = blk: {
-        var offsets = [_]u64{0} ** 32;
-        try computeOffsets(all_rnds, &offsets, num_rows, n_threads);
-        break :blk offsets;
-    };
-    print("Offsets: ", .{});
-    for (offsets) |offset| print("{} ", .{offset});
-    print("\n", .{});
-    try file.setEndPos(offsets[n_threads]);
-    const idxs_per_thread: u64 = num_rows / n_threads;
-    var curr_idx: u64 = 0;
-    var threads: [32]Thread = undefined;
     for (0..n_threads) |i| {
-        threads[i] = try Thread.spawn(
-            .{},
-            writer2,
-            .{ filename, all_rnds[curr_idx .. curr_idx + idxs_per_thread], offsets[i] },
-        );
-        curr_idx += idxs_per_thread;
-    }
-    for (0..n_threads) |i| threads[i].join();
-    if (offsets[n_threads] != offsets[n_threads - 1]) {
-        writer2(filename, all_rnds[curr_idx..all_rnds.len], offsets[n_threads]);
-    }
-}
-
-fn writer2(filename: []const u8, rnds: []u16, offset: u64) !void {
-    std.debug.assert(rnds.len > 0);
-    // file
-    var file = try std.fs.cwd().openFile(filename, .{ .mode = .write_only });
-    defer file.close();
-    try file.seekTo(offset);
-    // data
-    var data_buffer: [4096]u8 = undefined;
-    // buffer idx
-    var idx = Idx{};
-    for (rnds) |curr_row| {
-        const station = WeatherStations.stations[curr_row];
-        idx = try core(file, station, idx, &data_buffer);
-    }
-    if (idx.start != 0) {
-        _ = try file.write(data_buffer[0..idx.start]);
+        offsets[i] += offsets[i - 1];
     }
 }

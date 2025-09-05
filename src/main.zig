@@ -3,36 +3,40 @@ const Allocator = std.mem.Allocator;
 const print = std.debug.print;
 
 const CreateMeasurements = @import("CreateMeasurements.zig");
-const ver0 = CreateMeasurements.ver0;
-const ver1 = CreateMeasurements.ver1;
-const ver2 = CreateMeasurements.ver2;
+const wVer0 = CreateMeasurements.ver0;
+const wVer1 = CreateMeasurements.ver1;
+// const wVer2 = CreateMeasurements.ver2;
 
-// TODO:
-// 1. finish writerv2
-// 2. finish reader v0-3
-// 3. test speed of all of them
+// const ParseMeasurements = @import("ParseMeasurements.zig");
+// const rVer0 = ParseMeasurements.ver0;
+// const rVer0 = CreateMeasurements.ver2;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allo: Allocator = gpa.allocator();
     defer std.debug.assert(gpa.deinit() == .ok);
-    // _ = allo;
+    _ = allo;
 
-    const num_rows: u32 = 2 * 4096 + 1;
-    // try timer(.{ .ver0 = ver0 }, .{ .num_rows = num_rows });
-    // try timer(.{ .ver1 = ver1 }, .{ .num_rows = num_rows });
-    try timer(.{ .ver2 = ver2 }, .{ .allo = allo, .num_rows = num_rows });
+    // create file
+    const num_rows: u32 = 1024 * 1024;
+    try timer(.{ .wVer0 = wVer0 }, .{ .num_rows = num_rows });
+    try timer(.{ .wVer1 = wVer1 }, .{ .num_rows = num_rows });
+    // try timer(.{ .wVer2 = wVer2 }, .{ .allo = allo, .num_rows = num_rows }); // still not working correctly
+
+    // read file
+    // try timer(.{ .rVer0 = rVer0 }, .{});
 }
 
 const Versions = union(enum) {
-    ver0: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
-    ver1: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver1)).@"fn".return_type.?).error_union.error_set!void,
-    ver2: fn (std.mem.Allocator, u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver2)).@"fn".return_type.?).error_union.error_set!void,
+    wVer0: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
+    wVer1: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver1)).@"fn".return_type.?).error_union.error_set!void,
+    // wVer2: fn (std.mem.Allocator, u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver2)).@"fn".return_type.?).error_union.error_set!void,
+    // rVer0: fn () @typeInfo(@typeInfo(@TypeOf(ParseMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
 };
 
 const Inputs = struct {
     allo: ?Allocator = null,
-    num_rows: u32,
+    num_rows: u32 = 0,
 };
 
 fn timer(
@@ -41,9 +45,10 @@ fn timer(
 ) !void {
     const start = std.time.nanoTimestamp();
     switch (versions) {
-        .ver0 => |ver| try ver(inputs.num_rows),
-        .ver1 => |ver| try ver(inputs.num_rows),
-        .ver2 => |ver| try ver(inputs.allo.?, inputs.num_rows),
+        .wVer0 => |ver| try ver(inputs.num_rows),
+        .wVer1 => |ver| try ver(inputs.num_rows),
+        // .wVer2 => |ver| try ver(inputs.allo.?, inputs.num_rows),
+        // .rVer0 => |ver| try ver(),
     }
     const end = std.time.nanoTimestamp();
 
