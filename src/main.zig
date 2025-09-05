@@ -13,7 +13,7 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     // _ = allo;
 
-    const num_rows: u32 = 1024;
+    const num_rows: u32 = 2 * 1024;
     // try timer(.{ .ver0 = ver0 }, .{ .num_rows = num_rows });
     // try timer(.{ .ver1 = ver1 }, .{ .num_rows = num_rows });
     try timer(.{ .ver2 = ver2 }, .{ .allo = allo, .num_rows = num_rows });
