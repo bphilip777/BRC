@@ -3,6 +3,10 @@ const print = std.debug.print;
 const Allocator = std.mem.Allocator;
 const WeatherStations = @import("WeatherStations.zig").stations;
 
+// TODO: 2 problems:
+// 1. Number of kbs is different between the versions - why? Ver2 is double the size = actually wrong
+// 2. Why does the threaded version take so long?
+
 fn roundToTenths(x: f32) f32 {
     return @round(x * 10.0) / 10.0;
 }
@@ -98,31 +102,32 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
     // compute threads
     const n_threads: u8 = try computeNThreads(num_rows);
     // precompute random numbers
-    const rows = try preComputeRows(allo, num_rows, n_threads, &rng);
+    const rows = try preComputeRows(allo, num_rows, n_threads, &rng); // correct
     defer allo.free(rows);
-    print("Rows: ", .{});
-    for (0..10) |i| print("{} ", .{rows[i]});
-    print("\n", .{});
     // compute offsets into memory
     var offsets = [_]u64{0} ** 32;
-    try preComputeOffsets(&offsets, num_rows, rows, n_threads);
-    print("Offsets: ", .{});
-    for (offsets[0..n_threads]) |offset| print("{} ", .{offset});
-    print("\n", .{});
+    try preComputeOffsets(&offsets, num_rows, rows, n_threads); // correct
     try file.setEndPos(offsets[n_threads]);
+    for (offsets) |offset| print("{} ", .{offset});
     const n_rows_per_thread = num_rows / n_threads;
-    var curr: u32 = 0;
     var threads: [32]std.Thread = undefined;
-    for (0..n_threads) |i| {
+    var offset: u64 = 0;
+    threads[0] = try std.Thread.spawn(
+        .{},
+        write2,
+        .{ filename, &rng, rows[0..n_rows_per_thread], offset },
+    );
+    var curr_row: u32 = n_rows_per_thread;
+    for (1..n_threads) |i| {
+        offset += offsets[i - 1];
         threads[i] = try std.Thread.spawn(
             .{},
             write2,
-            .{ filename, &rng, rows, offsets[i] },
+            .{ filename, &rng, rows[curr_row .. curr_row + n_rows_per_thread], offset },
         );
-        curr += n_rows_per_thread;
+        curr_row += n_rows_per_thread;
     }
-    if (curr < num_rows) {}
-    // for (0..n_threads) |i| threads[i].join();
+    for (0..n_threads) |i| threads[i].join();
 }
 
 fn fillRows(rng: *const std.Random, rows: []u16) !void {
@@ -185,9 +190,6 @@ fn preComputeOffsets(offsets: []u64, num_rows: u32, rows: []u16, n_threads: u8) 
     if (curr_idx < num_rows) {
         try fillOffsets(&offsets[n_threads], rows[curr_idx..num_rows]);
     }
-    for (1..n_threads + 1) |i| {
-        offsets[i] += offsets[i - 1];
-    }
 }
 
 fn write2(
@@ -199,6 +201,7 @@ fn write2(
     var file = try std.fs.cwd().openFile(filename, .{ .mode = .write_only });
     defer file.close();
     try file.seekTo(offset);
+
     var line_buf: [64]u8 = undefined;
     // data
     var data_buf: [4096]u8 = undefined;
@@ -206,7 +209,7 @@ fn write2(
     // loop
     for (rows) |row| {
         const station = WeatherStations[row];
-        const new_temp = sampleGaussian(&rng, station.temp, 10);
+        const new_temp = sampleGaussian(rng, station.temp, 10);
         const newline = try std.fmt.bufPrint(&line_buf, "{s};{};\r\n", .{ station.id, new_temp });
         if ((data_idx + newline.len) > data_buf.len) {
             _ = try file.write(data_buf[0..data_idx]);
@@ -215,7 +218,5 @@ fn write2(
         @memcpy(data_buf[data_idx .. data_idx + newline.len], newline);
         data_idx += @truncate(newline.len);
     }
-    if (data_idx != 0) {
-        _ = try file.write(data_buf[0..data_idx]);
-    }
+    _ = try file.write(data_buf[0..data_idx]);
 }
