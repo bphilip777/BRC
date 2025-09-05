@@ -190,17 +190,15 @@ fn computeOffsets(all_rnds: []u16, offsets: []u64, num_rows: u32, n_threads: u32
     for (1..n_threads) |i| offsets[i] += offsets[i - 1];
     // compute file size at end
     const num_semicolons: u64 = 2;
+    offsets[n_threads] = offsets[n_threads - 1];
     if (curr_offset < num_rows) {
         for (all_rnds[curr_offset..]) |all_rnd| {
             const station = WeatherStations.stations[all_rnd];
-            offsets[n_threads] = offsets[n_threads - 1] + //
-                station.id.len + //
+            offsets[n_threads] += station.id.len + //
                 station.temp.len + //
                 num_semicolons + //
                 end_str.len;
         }
-    } else {
-        offsets[n_threads + 1] = offsets[n_threads];
     }
 }
 
@@ -226,52 +224,59 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
     // pre-compute all random numbers
     const all_rnds = try computeRnds(allo, num_rows, n_threads);
     defer allo.free(all_rnds);
+    print("# of Rnds: {}\n", .{all_rnds.len});
     // compute offsets
     const offsets = blk: {
         var offsets = [_]u64{0} ** 32;
         try computeOffsets(all_rnds, &offsets, num_rows, n_threads);
         break :blk offsets;
     };
-    for (offsets) |offset| print("{} ", .{offset});
-    var curr_pos: u64 = 0;
-    for (all_rnds) |all_rnd| {
-        const station = WeatherStations.stations[all_rnd];
-        curr_pos += station.id.len + station.temp.len + 2 + end_str.len;
-    }
-    print("Curr Pos: {}\n", .{curr_pos});
+    try file.setEndPos(offsets[n_threads]);
+    // try writer2(file, all_rnds[], offsets[1]);
+    // for (offsets) |offset| print("{} ", .{offset});
+    // var curr_pos: u64 = 0;
+    // for (all_rnds) |all_rnd| {
+    //     const station = WeatherStations.stations[all_rnd];
+    //     curr_pos += station.id.len + station.temp.len + 2 + end_str.len;
+    // }
+    // print("Curr Pos: {}\n", .{curr_pos});
 }
 
-fn writer2(file: std.fs.File, rnds: []u16) !void {
+fn writer2(file: std.fs.File, rnds: []u16, offset: u64) !void {
     if (rnds.len == 0) return;
+    // file
+    try file.seekTo(offset);
+    // data
     var data_buffer: [4096]u8 = undefined;
-    var buf_start: u16 = 0;
-    var buf_end: u16 = 0;
-    const num_semicolons: u64 = 2;
+    const T: type = u16;
+    var buf_start: T = 0;
+    var buf_end: T = 0;
+    const num_semicolons: u16 = 2;
     for (rnds) |curr_row| {
         const station = WeatherStations.stations[curr_row];
         buf_end = buf_start + //
-            @as(u32, @truncate(station.id.len)) + //
-            @as(u32, @truncate(station.temp.len)) + //
-            @as(u32, @truncate(end_str.len)) + //
+            @as(T, @truncate(station.id.len)) + //
+            @as(T, @truncate(station.temp.len)) + //
+            @as(T, @truncate(end_str.len)) + //
             num_semicolons;
         if (buf_end >= data_buffer.len) { // write data buffer
             _ = try file.write(data_buffer[0..buf_start]);
             buf_end -= buf_start;
             buf_start = 0;
-        } else { // write daat
+        } else { // write out buffer
             buf_end = buf_start + //
-                @as(u32, @truncate(station.id.len));
+                @as(T, @truncate(station.id.len)); // name
             @memcpy(data_buffer[buf_start..buf_end], station.id);
-            @memset(data_buffer[buf_start .. buf_start + 1], ';');
+            @memset(data_buffer[buf_start .. buf_start + 1], ';'); // semicolon 1
             buf_start += 1;
             buf_end = buf_start + //
-                @as(u32, @truncate(station.temp.len));
+                @as(T, @truncate(station.temp.len)); // temp
             @memcpy(data_buffer[buf_start..buf_end], station.temp);
             buf_start = buf_end;
-            @memset(data_buffer[buf_start .. buf_start + 1], ';');
+            @memset(data_buffer[buf_start .. buf_start + 1], ';'); // semicolon 2
             buf_start += 1;
             buf_end = buf_start + //
-                @as(u32, @truncate(end_str.len));
+                @as(T, @truncate(end_str.len)); // end str
             @memcpy(data_buffer[buf_start..buf_end], end_str);
         }
         buf_start = buf_end;
