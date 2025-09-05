@@ -98,29 +98,29 @@ fn writer1(file: std.fs.File, num_rows: u32) !void {
         //     .{ station.id, station.temp, end_str },
         // ) catch unreachable;
         buf_end = buf_start + //
-                              @as(u32, @truncate(station.id.len)) + //
-                              @as(u32, @truncate(station.temp.len)) + //
-                              @as(u32, @truncate(end_str.len)) + //
-                              num_semicolons;
+            @as(u32, @truncate(station.id.len)) + //
+            @as(u32, @truncate(station.temp.len)) + //
+            @as(u32, @truncate(end_str.len)) + //
+            num_semicolons;
         if (buf_end >= data_buffer.len) { // write data buffer
             _ = try file.write(data_buffer[0..buf_start]);
             buf_end -= buf_start;
             buf_start = 0;
         } else { // write daat
-        buf_end = buf_start + //
-            @as(u32, @truncate(station.id.len));
-        @memcpy(data_buffer[buf_start..buf_end], station.id);
-        @memset(data_buffer[buf_start..buf_start + 1], ';');
-        buf_start += 1;
-        buf_end = buf_start + //
-            @as(u32, @truncate(station.temp.len));
-        @memcpy(data_buffer[buf_start..buf_end], station.temp);
-        buf_start = buf_end;
-        @memset(data_buffer[buf_start..buf_start + 1], ';');
-        buf_start += 1;
-        buf_end = buf_start + //
-            @as(u32, @truncate(end_str.len));
-        @memcpy(data_buffer[buf_start..buf_end], end_str);
+            buf_end = buf_start + //
+                @as(u32, @truncate(station.id.len));
+            @memcpy(data_buffer[buf_start..buf_end], station.id);
+            @memset(data_buffer[buf_start .. buf_start + 1], ';');
+            buf_start += 1;
+            buf_end = buf_start + //
+                @as(u32, @truncate(station.temp.len));
+            @memcpy(data_buffer[buf_start..buf_end], station.temp);
+            buf_start = buf_end;
+            @memset(data_buffer[buf_start .. buf_start + 1], ';');
+            buf_start += 1;
+            buf_end = buf_start + //
+                @as(u32, @truncate(end_str.len));
+            @memcpy(data_buffer[buf_start..buf_end], end_str);
         }
         buf_start = buf_end;
     }
@@ -133,6 +133,7 @@ fn storeRandomNumber(arr: []u16, offset: u32, n_idxs: u32) void {
 }
 
 pub fn ver2(allo: Allocator, num_rows: u32) !void {
+    _ = allo;
     // same as ver1 but threaded
     if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
     if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
@@ -147,11 +148,12 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
 
     // compute threads
     const n_threads = computeNThreads(num_rows);
+    print("# of Threads: {}\n", .{n_threads});
     // pre-compute all random numbers
-    const all_rnds = try preComputeRnds(allo, num_rows, n_threads);
-    defer allo.free(all_rnds);
-    for (all_rnds) |val| print("{} ", .{val});
-    print("\n", .{});
+    // const all_rnds = try computeRnds(allo, num_rows, n_threads);
+    // defer allo.free(all_rnds);
+    // for (all_rnds) |val| print("{} ", .{val});
+    // print("\n", .{});
 
     // const offsets: [32]usize = blk: {
     //     var offsets: [32]usize = undefined;
@@ -202,14 +204,14 @@ fn computeNThreads(num_rows: u32) u32 {
     return @min(usable_threads, data_threads);
 }
 
-fn preComputeRnds(allo: Allocator, num_rows: usize, n_threads: usize) ![]u8 {
+fn computeRnds(allo: Allocator, num_rows: u32, n_threads: u32) ![]u16 {
     // create mem
-    const all_rnds: []u8 = try allo.alloc(u16, num_rows);
+    const all_rnds: []u16 = try allo.alloc(u16, num_rows);
     errdefer allo.free(all_rnds);
     // create threads
     var threads: [32]Thread = undefined;
     // compute offsets
-    const idxs_per_thread = num_rows / n_threads;
+    const idxs_per_thread: u32 = num_rows / n_threads;
     var curr_offset: u32 = 0;
     for (0..n_threads) |i| {
         threads[i] = try std.Thread.spawn(

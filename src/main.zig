@@ -8,40 +8,37 @@ const ver1 = CreateMeasurements.ver1;
 const ver2 = CreateMeasurements.ver2;
 
 pub fn main() !void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    // const allo = gpa.allocator();
-    // defer std.debug.assert(gpa.deinit() == .ok);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allo: Allocator = gpa.allocator();
+    defer std.debug.assert(gpa.deinit() == .ok);
+    // _ = allo;
 
-    const num_rows: u32 = 1024 * 1024;
-    try timer(.{ .ver0 = .{ .my_fn = ver0, .num_rows = num_rows } });
-    try timer(.{ .ver1 = .{ .my_fn = ver1, .num_rows = num_rows } });
-    // try timer(allo, num_rows, ver2);
+    const num_rows: u32 = 10;
+    // try timer(.{ .ver0 = ver0 }, .{ .num_rows = num_rows });
+    // try timer(.{ .ver1 = ver1 }, .{ .num_rows = num_rows });
+    try timer(.{ .ver2 = ver2 }, .{ .allo = allo, .num_rows = num_rows });
 }
 
 const Versions = union(enum) {
-    ver0: struct {
-        my_fn: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
-        num_rows: u32,
-    },
-    ver1: struct {
-        my_fn: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver1)).@"fn".return_type.?).error_union.error_set!void,
-        num_rows: u32,
-    },
-    ver2: struct {
-        my_fn: fn (std.mem.Allocator, u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver2)).@"fn".return_type.?).error_union.error_set!void,
-        allo: std.mem.Allocator,
-        num_rows: u32,
-    },
+    ver0: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver0)).@"fn".return_type.?).error_union.error_set!void,
+    ver1: fn (u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver1)).@"fn".return_type.?).error_union.error_set!void,
+    ver2: fn (std.mem.Allocator, u32) @typeInfo(@typeInfo(@TypeOf(CreateMeasurements.ver2)).@"fn".return_type.?).error_union.error_set!void,
+};
+
+const Inputs = struct {
+    allo: ?Allocator = null,
+    num_rows: u32,
 };
 
 fn timer(
-    version: Versions,
+    versions: Versions,
+    inputs: Inputs,
 ) !void {
     const start = std.time.nanoTimestamp();
-    switch (version) {
-        .ver0 => |ver| try ver.my_fn(ver.num_rows),
-        .ver1 => |ver| try ver.my_fn(ver.num_rows),
-        .ver2 => |ver| try ver.my_fn(ver.allo, ver.num_rows),
+    switch (versions) {
+        .ver0 => |ver| try ver(inputs.num_rows),
+        .ver1 => |ver| try ver(inputs.num_rows),
+        .ver2 => |ver| try ver(inputs.allo.?, inputs.num_rows),
     }
     const end = std.time.nanoTimestamp();
 
