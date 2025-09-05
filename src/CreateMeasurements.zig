@@ -249,8 +249,21 @@ pub fn ver2(allo: Allocator, num_rows: u32) !void {
     for (offsets) |offset| print("{} ", .{offset});
     print("\n", .{});
     try file.setEndPos(offsets[n_threads]);
-    const idxs_per_thread: u32 = num_rows / n_threads;
-    try writer2(filename, all_rnds[idxs_per_thread .. idxs_per_thread * 2], offsets[1]);
+    const idxs_per_thread: u64 = num_rows / n_threads;
+    var curr_idx: u64 = 0;
+    var threads: [32]Thread = undefined;
+    for (0..n_threads) |i| {
+        threads[i] = try Thread.spawn(
+            .{},
+            writer2,
+            .{ filename, all_rnds[curr_idx .. curr_idx + idxs_per_thread], offsets[i] },
+        );
+        curr_idx += idxs_per_thread;
+    }
+    for (0..n_threads) |i| threads[i].join();
+    if (offsets[n_threads] != offsets[n_threads - 1]) {
+        writer2(filename, all_rnds[curr_idx..all_rnds.len], offsets[n_threads]);
+    }
     // for (offsets) |offset| print("{} ", .{offset});
     // var curr_pos: u64 = 0;
     // for (all_rnds) |all_rnd| {
