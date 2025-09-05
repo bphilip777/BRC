@@ -133,69 +133,6 @@ fn storeRandomNumber(arr: []u16, offset: u32, n_idxs: u32) void {
     }
 }
 
-pub fn ver2(allo: Allocator, num_rows: u32) !void {
-    // same as ver1 but threaded
-    if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
-    if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
-    // // create filename
-    // var filename_buffer: [128]u8 = undefined;
-    // const filename = std.fmt.bufPrint(
-    //     &filename_buffer,
-    //     "{s}_{}_{}{s}",
-    //     .{ basepath, 2, num_rows, ext },
-    // ) catch unreachable;
-    // _ = filename;
-
-    // compute threads
-    const n_threads = computeNThreads(num_rows);
-    // pre-compute all random numbers
-    const all_rnds = try computeRnds(allo, num_rows, n_threads);
-    defer allo.free(all_rnds);
-    for (all_rnds) |val| print("{} ", .{val});
-    print("\n", .{});
-
-    // const offsets: [32]usize = blk: {
-    //     var offsets: [32]usize = undefined;
-    //     for (0..n_threads) |i| {
-
-    // fn computeOffsets(all_rnds: []u32, offsets: *u32) void {
-    //             threads[i] = try std.Thread.spawn(.{}, computeOffset, .{&offsets[i]});
-    //         }
-    //         for (0..n_threads) |i| threads[i].join();
-    //         for (1..n_threads) |i| offsets[i] += offsets[i - 1];
-    //         break :blk offsets;
-    //     };
-    //     // create file
-    //     var file = try std.fs.cwd().createFile(filename, .{ .mode = .write_only });
-    //     defer file.close();
-    //     try file.setEndPos(max_bytes_per_row * num_rows);
-    //     // create threads + loop
-    //     var threads: [32]Thread = undefined;
-    //     var curr_offset: usize = 0;
-    //     for (0..n_threads) |i| {
-    //         threads[i] = try Thread.spawn(
-    //             .{},
-    //             writer2,
-    //             .{
-    //                 file,
-    //                 curr_offset,
-    //                 rows_per_thread,
-    //             },
-    //         );
-    //         curr_offset += max_bytes_per_row;
-    //     }
-    //     // join threads
-    //     for (threads[0..n_threads]) |*thread| thread.join();
-    //     // get remaining data
-    //     if ((n_threads * rows_per_thread) < num_rows) {
-    //         try writer2(
-    //             file,
-    //             n_threads * rows_per_thread,
-    //             num_rows - (n_threads * rows_per_thread),
-    //         );
-    //     }
-}
-
 fn computeNThreads(num_rows: u32) u32 {
     const total_threads = Thread.getCpuCount() catch 1;
     const usable_threads = total_threads - @intFromBool(total_threads > 1);
@@ -235,6 +172,35 @@ fn computeOffsets(all_rnds: []u32, offsets: *u32) void {
         i += station.id.len + station.temp.len;
     }
     offsets.* = i;
+}
+
+pub fn ver2(allo: Allocator, num_rows: u32) !void {
+    // same as ver1 but threaded
+    if (num_rows == 0) return CreateMeasurementsError.TooFewRows;
+    if (num_rows > NUM_ROWS_LIMIT) return CreateMeasurementsError.TooManyRows;
+    // create filename
+    // var filename_buffer: [128]u8 = undefined;
+    // const filename = std.fmt.bufPrint(
+    //     &filename_buffer,
+    //     "{s}_{}_{}{s}",
+    //     .{ basepath, 2, num_rows, ext },
+    // ) catch unreachable;
+    // _ = filename;
+
+    // compute threads
+    const n_threads = computeNThreads(num_rows);
+    // pre-compute all random numbers
+    const all_rnds = try computeRnds(allo, num_rows, n_threads);
+    defer allo.free(all_rnds);
+    for (all_rnds) |val| print("{} ", .{val});
+    print("\n", .{});
+    // compute offsets
+    const offsets = blk: {
+        var offsets: [32]u32 = undefined;
+        for (0..n_threads) |i| {
+            offsets[i] = 1;
+        }
+    };
 }
 
 fn writer2(
